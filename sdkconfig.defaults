@@ -1,0 +1,21 @@
+CONFIG_IDF_TARGET="esp32"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_ESPTOOLPY_MONITOR_BAUD=115200
+# app_main wires up modules and runs the UI loop on the main task.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# Custom partition table: dual OTA so firmware can be pushed over HTTP
+# (POST /firmware) instead of the USB cable — see partitions.csv.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# OTA rollback: a freshly-OTA'd image boots PENDING_VERIFY; main.cpp marks it
+# valid only once Wi-Fi hands out an IP. An image that panics or never gets on
+# the network rolls back to the previous slot on the next reset.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# C++: mianesp components use std::function / std::regex.
+CONFIG_COMPILER_CXX_EXCEPTIONS=y
+CONFIG_COMPILER_CXX_RTTI=y
+

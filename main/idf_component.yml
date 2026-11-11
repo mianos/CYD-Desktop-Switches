@@ -1,0 +1,35 @@
+dependencies:
+  # Display: the ILI9341 panel driver lives in the registry in IDF v6.
+  espressif/esp_lcd_ili9341: "^2.1.0"
+  # MQTT and cJSON are now managed components in IDF v6.
+  espressif/mqtt: "*"
+  espressif/cjson: "*"
+  # Shared infrastructure — mianesp repo, main branch (same pattern as
+  # stillerate2 / ws-voice).
+  jsonwrapper:
+    git: git@github.com:mianos/mianesp.git
+    path: components/jsonwrapper
+    version: main
+  nvsstoragemanager:
+    git: git@github.com:mianos/mianesp.git
+    path: components/nvsstoragemanager
+    version: main
+  wifimanager:
+    git: git@github.com:mianos/mianesp.git
+    path: components/wifimanager
+    version: main
+  settingsbase:
+    git: git@github.com:mianos/mianesp.git
+    path: components/settingsbase
+    version: main
+  mqttwrapper:
+    git: git@github.com:mianos/mianesp.git
+    path: components/mqttwrapper
+    version: main
+  # HTTP surface for OTA (/firmware) — same base class as stillerate2,
+  # ws-voice and mqttradar, so /healthz, /reset and /set_hostname behave alike.
+  webserver:
+    git: git@github.com:mianos/mianesp.git
+    path: components/webserver
+    version: main
+

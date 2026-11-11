@@ -1,0 +1,8 @@
+menu "CYD display test"
+    config CYD_BRIGHTNESS
+        int "Backlight brightness (%)"
+        range 0 100
+        default 100
+        help
+            Initial TFT backlight brightness, applied at boot.
+endmenu

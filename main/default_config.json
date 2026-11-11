@@ -1,0 +1,75 @@
+{
+  "title": "desk",
+  "poll_s": 60,
+  "rows": [
+    {
+      "height": 64,
+      "buttons": [
+        {
+          "label": "DESK",
+          "publish": {
+            "topic": "cmnd/zigbridge/ZbSend",
+            "on": "{\"Device\":\"0x1234\",\"send\":{\"Power\":\"On\"}}",
+            "off": "{\"Device\":\"0x1234\",\"send\":{\"Power\":\"Off\"}}"
+          },
+          "state": {
+            "topic": "tele/zigbridge/SENSOR",
+            "path": "ZbReceived.0x1234.Power",
+            "on": ["ON", "On", 1, true]
+          },
+          "query": {
+            "topic": "cmnd/zigbridge/ZbSend",
+            "payload": "{\"Device\":\"0x1234\",\"read\":{\"Power\":1}}"
+          }
+        }
+      ]
+    },
+    {
+      "height": 64,
+      "buttons": [
+        {
+          "label": "LIGHT",
+          "publish": {
+            "topic": "cmnd/light/POWER",
+            "on": "ON",
+            "off": "OFF"
+          },
+          "state": {
+            "topic": "stat/light/RESULT",
+            "path": "POWER",
+            "on": ["ON"]
+          },
+          "query": {
+            "topic": "cmnd/light/Power"
+          }
+        }
+      ]
+    },
+    {
+      "height": 88,
+      "buttons": [
+        {
+          "label": "UP",
+          "publish": {
+            "topic": "cmnd/zigbridge/ZbSend",
+            "press": "{\"Device\":\"0x5678\",\"Write\":{\"EF00/0401\":0}}"
+          }
+        },
+        {
+          "label": "STOP",
+          "publish": {
+            "topic": "cmnd/zigbridge/ZbSend",
+            "press": "{\"Device\":\"0x5678\",\"Write\":{\"EF00/0401\":1}}"
+          }
+        },
+        {
+          "label": "DOWN",
+          "publish": {
+            "topic": "cmnd/zigbridge/ZbSend",
+            "press": "{\"Device\":\"0x5678\",\"Write\":{\"EF00/0401\":2}}"
+          }
+        }
+      ]
+    }
+  ]
+}
