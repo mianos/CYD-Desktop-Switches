@@ -5,3 +5,7 @@ managed_components/
 dependencies.lock
 .DS_Store
 .vscode/
+
+# Machine-specific: the real MQTT broker host (see main/Settings.h)
+main/local_settings.h
+

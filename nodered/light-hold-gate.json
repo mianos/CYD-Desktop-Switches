@@ -1,32 +1,32 @@
 [
     {
-        "id": "light-hold-tab",
+        "id": "hold-tab",
         "type": "tab",
         "label": "light hold gate",
         "disabled": false,
-        "info": "Keeps the light on for hold_min minutes after it is switched on, so\nan empty-room radar automation cannot turn it off while you sit still.\n\nInputs\n  cmnd/light/POWER  human intent (the CYD panel, Home Assistant, a switch):\n                          ON starts the hold, OFF cancels it. Passed straight\n                          through to the light, which is already subscribed.\n  cmnd/light/auto        automatic requests: point the radar flow's OFF (and any\n                          automatic ON) here instead of at the light. OFF during\n                          the hold is swallowed, remembered, and honoured once at\n                          expiry.\n  stat/light/RESULT belt and braces: if the light reports OFF during the\n                          hold, turn it back on.\n\nOutput\n  cmnd/light/POWER  the gate's own commands.\n\nTuning: set flow.hold_min (default 10) from an inject or a change node."
+        "info": "Keeps the the light on for hold_min minutes after it is switched on, so\nan empty-room radar automation cannot turn it off while you sit still.\n\nInputs\n  cmnd/light/POWER  human intent (the CYD panel, Home Assistant, a switch):\n                          ON starts the hold, OFF cancels it. Passed straight\n                          through to the light, which is already subscribed.\n  cmnd/light/auto        automatic requests: point the radar flow's OFF (and any\n                          automatic ON) here instead of at the light. OFF during\n                          the hold is swallowed, remembered, and honoured once at\n                          expiry.\n  stat/light/RESULT belt and braces: if the light reports OFF during the\n                          hold, turn it back on.\n\nOutput\n  cmnd/light/POWER  the gate's own commands.\n\nTuning: set flow.hold_min (default 10) from an inject or a change node."
     },
     {
-        "id": "light-hold-in-cmnd",
+        "id": "hold-in-cmnd",
         "type": "mqtt in",
-        "z": "light-hold-tab",
+        "z": "hold-tab",
         "name": "human commands",
         "topic": "cmnd/light/POWER",
         "qos": "0",
         "datatype": "auto",
-        "broker": "light-hold-broker",
+        "broker": "hold-broker",
         "nl": false,
         "rap": true,
         "rh": 0,
         "inputs": 0,
         "x": 160,
         "y": 100,
-        "wires": [["light-hold-gate"]]
+        "wires": [["hold-gate"]]
     },
     {
-        "id": "light-hold-gate",
+        "id": "hold-gate",
         "type": "function",
-        "z": "light-hold-tab",
+        "z": "hold-tab",
         "name": "hold window",
         "func": "// A human ON opens the window; a human OFF closes it again. The panel sends\n// explicit ON/OFF (never TOGGLE), so this is unambiguous.\nconst now = Date.now();\nconst holdMs = (flow.get('hold_min') || 10) * 60000;\nconst cmd = (msg.payload === undefined || msg.payload === null)\n    ? ''\n    : msg.payload.toString().trim().toUpperCase();\n\nif (cmd === 'ON') {\n    // Our own re-assert must not restart the window for ever.\n    if (now > (flow.get('ignore_on') || 0)) {\n        flow.set('hold_until', now + holdMs);\n        flow.set('pending_off', false);\n    }\n    node.status({ fill: 'green', shape: 'dot', text: 'holding' });\n} else if (cmd === 'OFF') {\n    flow.set('hold_until', 0);\n    flow.set('pending_off', false);\n    node.status({ fill: 'grey', shape: 'ring', text: 'idle' });\n}\n\nreturn null;\n",
         "outputs": 1,
@@ -40,26 +40,26 @@
         "wires": [[]]
     },
     {
-        "id": "light-hold-in-auto",
+        "id": "hold-in-auto",
         "type": "mqtt in",
-        "z": "light-hold-tab",
+        "z": "hold-tab",
         "name": "automatic requests",
         "topic": "cmnd/light/auto",
         "qos": "0",
         "datatype": "auto",
-        "broker": "light-hold-broker",
+        "broker": "hold-broker",
         "nl": false,
         "rap": true,
         "rh": 0,
         "inputs": 0,
         "x": 160,
         "y": 180,
-        "wires": [["light-hold-auto"]]
+        "wires": [["hold-auto"]]
     },
     {
-        "id": "light-hold-auto",
+        "id": "hold-auto",
         "type": "function",
-        "z": "light-hold-tab",
+        "z": "hold-tab",
         "name": "gate automatic OFF",
         "func": "// OFF from the radar's empty-room automation: swallow it while the window is\n// open and remember that it was wanted, so the reconcile timer can honour it\n// once the window has expired. Outside the window it is passed straight on.\nconst now = Date.now();\nconst cmd = (msg.payload === undefined || msg.payload === null)\n    ? ''\n    : msg.payload.toString().trim().toUpperCase();\n\nif (cmd === 'OFF') {\n    if (now < (flow.get('hold_until') || 0)) {\n        flow.set('pending_off', true);\n        node.status({ fill: 'yellow', shape: 'dot', text: 'OFF deferred' });\n        return null;\n    }\n    flow.set('pending_off', false);\n    return { topic: 'cmnd/light/POWER', payload: 'OFF', qos: 0, retain: false };\n}\n\nif (cmd === 'ON') {\n    return { topic: 'cmnd/light/POWER', payload: 'ON', qos: 0, retain: false };\n}\n\nreturn null;\n",
         "outputs": 1,
@@ -70,29 +70,29 @@
         "libs": [],
         "x": 390,
         "y": 180,
-        "wires": [["light-hold-out"]]
+        "wires": [["hold-out"]]
     },
     {
-        "id": "light-hold-in-result",
+        "id": "hold-in-result",
         "type": "mqtt in",
-        "z": "light-hold-tab",
+        "z": "hold-tab",
         "name": "light state",
         "topic": "stat/light/RESULT",
         "qos": "0",
         "datatype": "json",
-        "broker": "light-hold-broker",
+        "broker": "hold-broker",
         "nl": false,
         "rap": true,
         "rh": 0,
         "inputs": 0,
         "x": 140,
         "y": 260,
-        "wires": [["light-hold-watch"]]
+        "wires": [["hold-watch"]]
     },
     {
-        "id": "light-hold-watch",
+        "id": "hold-watch",
         "type": "function",
-        "z": "light-hold-tab",
+        "z": "hold-tab",
         "name": "put it back on",
         "func": "// Belt and braces: if the light reports OFF while the window is open, turn it\n// back on. Catches OFF commands that never came through the gate (a Tasmota\n// timer or rule, a physical switch that reports its state).\nconst now = Date.now();\nconst power = (msg.payload && msg.payload.POWER)\n    ? msg.payload.POWER.toString().toUpperCase()\n    : '';\n\nif (power !== 'OFF') return null;\nif (now >= (flow.get('hold_until') || 0)) return null;\n\nflow.set('pending_off', true);\nflow.set('ignore_on', now + 5000);\nreturn { topic: 'cmnd/light/POWER', payload: 'ON', qos: 0, retain: false };\n",
         "outputs": 1,
@@ -103,12 +103,12 @@
         "libs": [],
         "x": 370,
         "y": 260,
-        "wires": [["light-hold-out"]]
+        "wires": [["hold-out"]]
     },
     {
-        "id": "light-hold-tick",
+        "id": "hold-tick",
         "type": "inject",
-        "z": "light-hold-tab",
+        "z": "hold-tab",
         "name": "reconcile",
         "props": [{ "p": "payload" }],
         "repeat": "30",
@@ -120,12 +120,12 @@
         "payloadType": "date",
         "x": 150,
         "y": 340,
-        "wires": [["light-hold-reconcile"]]
+        "wires": [["hold-reconcile"]]
     },
     {
-        "id": "light-hold-reconcile",
+        "id": "hold-reconcile",
         "type": "function",
-        "z": "light-hold-tab",
+        "z": "hold-tab",
         "name": "deferred OFF at expiry",
         "func": "// Once the window has expired, honour a deferred OFF exactly once, so a room\n// that really is empty still ends up dark. A later human ON clears the flag.\nconst now = Date.now();\nif (!flow.get('pending_off')) return null;\nif (now < (flow.get('hold_until') || 0)) return null;\n\nflow.set('pending_off', false);\nreturn { topic: 'cmnd/light/POWER', payload: 'OFF', qos: 0, retain: false };\n",
         "outputs": 1,
@@ -136,13 +136,13 @@
         "libs": [],
         "x": 390,
         "y": 340,
-        "wires": [["light-hold-out"]]
+        "wires": [["hold-out"]]
     },
     {
-        "id": "light-hold-out",
+        "id": "hold-out",
         "type": "mqtt out",
-        "z": "light-hold-tab",
-        "name": "light",
+        "z": "hold-tab",
+        "name": "the light",
         "topic": "cmnd/light/POWER",
         "qos": "0",
         "retain": "false",
@@ -151,18 +151,18 @@
         "userProps": "",
         "correl": "",
         "expiry": "",
-        "broker": "light-hold-broker",
+        "broker": "hold-broker",
         "x": 660,
         "y": 180,
         "wires": []
     },
     {
-        "id": "light-hold-broker",
+        "id": "hold-broker",
         "type": "mqtt-broker",
         "name": "house",
         "broker": "mqtt.example.com",
         "port": "1883",
-        "clientid": "light-hold-gate",
+        "clientid": "hold-gate",
         "autoConnect": true,
         "usetls": false,
         "protocolVersion": "4",

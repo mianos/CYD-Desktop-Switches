@@ -144,6 +144,18 @@ mqtt_server    mqtt.example.com   mqtt_port 1883
 sensor_name    desk               (also the MQTT base topic and panel title)
 ```
 
+`mqtt_server` is deliberately not compiled in — the repo carries no broker
+hostname — so it comes from `main/local_settings.h` (git-ignored) on the machine
+that builds it:
+
+```c
+#define DESK_MQTT_SERVER "mqtt.example.com"
+```
+
+A build without that file starts with an empty broker and cannot join, so keep a
+copy of the file anywhere you build from. Everything else changes at runtime over
+`cmnd/desk/settings`:
+
 ```json
 {"sensor_name": "desk"}
 ```
@@ -161,10 +173,11 @@ main/
   Ui.h/.cpp          ui:: config-driven control surface + touch/MQTT loop
   PanelWebServer.h/.cpp  HTTP: /healthz, /reset, /set_hostname + OTA (/firmware)
   Settings.h         mianesp settingsbase schema (broker, device name)
+  local_settings.h   git-ignored: DESK_MQTT_SERVER for local builds
   main.cpp           app_main(): Wi-Fi + MQTT + settings + cmnd/<name>/config
   Kconfig.projbuild  CYD_BRIGHTNESS
 nodered/
-  light-hold-gate.json  the light hold (see above)
+  light-hold-gate.json   the light hold gate (see above)
 tools/
   gen_font.py        regenerates main/font_gen.h (needs Pillow)
   fonts/Inter.ttf    Inter variable font + its OFL licence
@@ -237,8 +250,8 @@ amber for Wi-Fi-only, red for offline.
 
 ## Hold gate
 
-See [Light hold gate (Node-RED)](#light-hold-gate-node-red). The
-firmware itself no longer holds the light on — it only publishes what you tap.
+See [Light hold gate (Node-RED)](#light-hold-gate-node-red). The firmware itself
+no longer holds the light on — it only publishes what you tap.
 
 ## Text
 
