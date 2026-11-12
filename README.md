@@ -31,8 +31,12 @@ over MQTT):
 | Row | Button | Publishes | State |
 |-----|--------|-----------|-------|
 | 1 | DESK (toggle) | `cmnd/zigbridge/ZbSend` `{"Device":"0x1234","send":{"Power":"On"\|"Off"}}` | `tele/zigbridge/SENSOR` `ZbReceived.0x1234.Power` |
-| 2 | LIGHT (toggle) | `cmnd/light/POWER` `ON` \| `OFF` | `stat/light/RESULT` `POWER` |
-| 3 | UP / STOP / DOWN | `cmnd/zigbridge/ZbSend` `{"Device":"0x5678","Write":{"EF00/0401":0\|1\|2}}` | — |
+| 1 | LIGHT (toggle) | `cmnd/light/POWER` `ON` \| `OFF` | `stat/light/RESULT` `POWER` |
+| 2 | UP / STOP / DOWN | `cmnd/zigbridge/ZbSend` `{"Device":"0x5678","Write":{"EF00/0401":0\|1\|2}}` | — |
+
+Both rows are `height: 0`, so they share the 160 px between the status bar and the
+clock footer: the two toggles half-width across the top, the three blind buttons
+across the bottom.
 
 Blind DP1 values are the Tuya control enum: `0` = open (UP), `1` = stop (STOP),
 `2` = close (DOWN).
@@ -99,6 +103,33 @@ corrupt NVS copy, which is ignored at boot in favour of the firmware default. A
 restart is used because `mqttwrapper` cannot unregister handlers; a clean boot is
 the only way to drop the old state subscriptions.
 
+### When a press does nothing
+
+The panel is generic: it publishes to whatever `publish.topic` the *loaded*
+config names, so a working touchscreen, a connected broker and a dead button set
+are all possible at once. The committed `default_config.json` points at
+placeholders (`0x1234`, `cmnd/light`), which is exactly what an unconfigured
+panel looks like. `GET /healthz` shows what the panel is really aimed at:
+
+```json
+{"wifi":true,"mqtt":true,"broker":"mqtt.example.com","sensor":"desk",
+ "config_topic":"cmnd/desk/config",
+ "buttons":"DESK->cmnd/zigbridge/ZbSend, LIGHT->cmnd/light/POWER"}
+```
+
+- `buttons` is the publish surface of the live config. Placeholder topics here
+  mean the panel is running the firmware default and needs the site's config.
+- `broker` is the host in use: a stale `mqtt_server` in NVS wins over the compiled
+  default, and an empty one now falls back to `DESK_MQTT_SERVER` (logged).
+- `mqtt` is true once the client has connected since boot; `mqttwrapper` exposes
+  no live state, so it does not drop back to false if the link later dies.
+
+Two things about a config push that the panel cannot report on its own:
+`esp-mqtt`'s inbound buffer defaults to 1024 bytes and silently discards anything
+larger, before any handler sees it — the client therefore sets
+`mcfg.buffer.size = 4096`, since a real two-row config is already ~1.2 KB. And
+the payload must be a JSON object, because `mqttwrapper` dispatches nothing else.
+
 ## Light hold gate (Node-RED)
 
 Pressing **LIGHT** shows the real light state (from `stat/light/RESULT`,
@@ -159,6 +190,16 @@ copy of the file anywhere you build from. Everything else changes at runtime ove
 ```json
 {"sensor_name": "desk"}
 ```
+
+`sensor_name` doubles as the Wi-Fi hostname, MQTT client id and topic base, and it
+is capped at 32 characters — clamped and re-saved as it is read, so a longer value
+cannot persist. Two reasons, both of which look like something else from the
+outside: `esp_netif_set_hostname()` rejects names past 32 (`wifimanager` calls it
+through `ESP_ERROR_CHECK`, so that is an abort during boot, not a warning), and the
+DHCP request carries the hostname twice, needing `41 + 2*len` bytes of option space
+— the 69-byte default `sdkconfig.defaults` now raises to 128 fits only 14. A name
+that associates but never leases would have its Wi-Fi credentials wiped after 30
+minutes by the watchdog, i.e. an innocent rename would look like a broken router.
 
 ## Structure
 
@@ -255,7 +296,8 @@ no longer holds the light on — it only publishes what you tap.
 
 ## Text
 
-The panel is 240x320 on 2.8", i.e. ~143 ppi, so 22 px type is only about 8 pt —
+The glass is 240x320 on 2.8" but the firmware drives it landscape, i.e. a 320x240
+framebuffer at ~143 ppi, so 22 px type is only about 8 pt —
 big enough to look normal, small enough that the old 5x7 bitmap font had to be
 doubled to 10x14 px to be readable at all. Text is now **Inter** (SIL OFL 1.1),
 rendered to 4 bits of coverage per pixel and alpha-blended into the framebuffer,
@@ -273,9 +315,10 @@ lights.
 The bottom 26 px are a footer holding the clock: `HH:MM` in the 18 px face,
 centred, no seconds and no date, so it reads as chrome like the status bar. It
 stays blank until SNTP has set the time (a clock stuck at 1970 is worse than no
-clock) and repaints once a minute. The default config's rows take 232 of the
-266 px content area, so the footer costs no button height; with `height: 0`
-rows the stack simply shares what is left over. The format is one `strftime`
+clock) and repaints once a minute. The 160 px between the status bar and the
+footer are what the row stack gets, and `height: 0` rows simply share it — the
+footer costs no button height, and a config that asks for more than there is gets
+scaled down rather than stacked out of reach. The format is one `strftime`
 call in `drawScene()` — `%I:%M` for a 12-hour clock, or add `%a %d` if you want
 the date next to it.
 
@@ -300,8 +343,11 @@ need neither Python nor Pillow. To change typeface, drop another TTF in
 
 - Status bar shows a green/red dot beside each of `WIFI` and `MQTT`; the RGB LED is
   green when both are up, amber for Wi-Fi only, red for offline.
-- Touch uses a calibrated linear map (`kRawXMin`.. in `main/Ui.cpp`); if buttons
-  are offset, re-check those four constants.
+- Touch uses a calibrated linear map (`kRawXMin`.. in `main/Ui.cpp`). Those four
+  numbers are in the panel's **native** axes, and the landscape rotation is applied
+  on top of them, so they do not change with orientation. If buttons are offset,
+  read the `tap raw=(...) -> screen=(...)` line every tap logs: press each corner
+  and re-check the four constants against it.
 - `mqttwrapper` only dispatches JSON payloads, so `state.topic` must carry JSON.
   Tasmota's `stat/<name>/RESULT` (`{"POWER":"ON"}`) and the Zigbee bridge's
   `tele/zigbridge/SENSOR` (`{"ZbReceived":{...}}`) both qualify; a plain
@@ -310,6 +356,10 @@ need neither Python nor Pillow. To change typeface, drop another TTF in
   read reply on `tele/zigbridge/SENSOR`; the config queries it with
   `{"Device":"0x1234","read":{"Power":1}}`, which is what keeps the DESK button
   honest after a reboot.
-- The CYD has no PSRAM, so the screen is drawn in 40-row bands rather than a
-  full framebuffer (a full 240x320 RGB565 buffer no longer fits beside Wi-Fi).
+- The CYD has no PSRAM, so the screen is drawn in 24-row bands rather than a
+  full framebuffer (a full 320x240 RGB565 buffer no longer fits beside Wi-Fi).
+- The framebuffer is landscape. `board::kUpsideDown` in `main/Board.h` turns it
+  180° (the two landscape rotations set MX and MY *together*, so they swap as a
+  pair) and the touch map follows the same flags — it is the only thing to change
+  if the panel ends up mounted the other way up.
 

@@ -132,10 +132,42 @@ void startClock() {
   if (err != ESP_OK) ESP_LOGW(TAG, "SNTP: init failed: %s", esp_err_to_name(err));
 }
 
+// --- Hostname hygiene -------------------------------------------------------
+//
+// The panel's name is also its Wi-Fi hostname, and both ends of that link are
+// stricter than they look:
+//
+//   * esp_netif_set_hostname() refuses anything over ESP_NETIF_HOSTNAME_MAX_SIZE
+//     (32), and wifimanager calls it through ESP_ERROR_CHECK — so a 33-character
+//     name is an abort during boot, not a cosmetic problem. sensor_name arrives
+//     on cmnd/<name>/settings and is persisted before it is used, so one MQTT
+//     message could leave a panel that reboots forever with nothing listening to
+//     undo it.
+//   * The DHCP request carries the hostname twice (option 12 and ESP-IDF's
+//     vendor-class-identifier hook, which falls back to it) plus the client id,
+//     so the option area needs 41 + 2*strlen(hostname) bytes. The 69-byte
+//     default fits only 14 characters; a longer name associates and then never
+//     gets a lease, which this panel answers by wiping the Wi-Fi credentials
+//     after 30 minutes (wifiWatchdogTask). sdkconfig.defaults raises the option
+//     area to 128 bytes so the 32-character cap below is comfortably inside it.
+constexpr size_t kMaxHostname = 32;
+
+std::string clampedHostname(std::string name) {
+  if (name.size() > kMaxHostname) {
+    ESP_LOGW(TAG, "name '%s' is %u chars; clamping to %u", name.c_str(),
+             static_cast<unsigned>(name.size()), static_cast<unsigned>(kMaxHostname));
+    name.resize(kMaxHostname);
+  }
+  return name;
+}
+
 // cmnd/<name>/settings — apply + persist a partial settings JSON blob.
 esp_err_t handleSettings(MqttClient*, const std::string&, const JsonWrapper& doc, void* ctx) {
   auto* settings = static_cast<Settings*>(ctx);
   settings->loadFromJson(doc);
+  // Persisted before the restart that a rename implies, so the stored value can
+  // never be one that the next boot cannot apply.
+  settings->sensorName = clampedHostname(settings->sensorName);
   settings->save();
   settings->log();
   return ESP_OK;
@@ -224,6 +256,18 @@ cfg::UiConfig loadUiConfig(NvsStorageManager& nvs, const std::string& fallbackTi
 
   if (parsed.title.empty()) parsed.title = fallbackTitle;
   return parsed;
+}
+
+// "DESK->cmnd/zigbridge/ZbSend, LIGHT->cmnd/light/POWER" — the whole
+// publish surface in one line, so /healthz shows at a glance whether the panel
+// is aimed at real devices or at the built-in placeholders.
+std::string describeConfig(const cfg::UiConfig& config) {
+  std::string out;
+  for (const auto& b : config.buttons) {
+    if (!out.empty()) out += ", ";
+    out += b.label + "->" + b.topic;
+  }
+  return out;
 }
 
 // Self-heal stale Wi-Fi credentials. If the device believes it is provisioned but
@@ -349,11 +393,28 @@ extern "C" void app_main(void) {
 
   static NvsStorageManager nvs;  // constructing this initialises NVS flash
   static Settings settings(nvs);
+  // Clamp before anything reads it: the name feeds the hostname, the MQTT client
+  // id and every topic, and a stored value past 32 characters would abort the
+  // boot (see clampedHostname). An NVS copy that is already too long therefore
+  // heals itself here rather than bricking the panel.
+  settings.sensorName = clampedHostname(settings.sensorName);
   settings.log();
 
   // Capture the stored Wi-Fi credentials before WiFiManager can start its
   // ESP-Touch fallback; starting ESP-Touch clears the driver's persisted config.
   g_haveCreds = loadStoredWifiCreds(g_creds);
+
+  // WiFiManager's constructor loads this same record and applies it through
+  // ESP_ERROR_CHECK, before app_main gets a say — so POST /set_hostname (which is
+  // not length-checked) has to be sanitised while it is still only in NVS.
+  {
+    std::string stored;
+    if (nvs.retrieve("hostname", stored) && stored.size() > kMaxHostname) {
+      ESP_LOGW(TAG, "stored hostname is %u chars; rewriting it as '%s'",
+               static_cast<unsigned>(stored.size()), settings.sensorName.c_str());
+      nvs.store("hostname", settings.sensorName);
+    }
+  }
 
   s_got_ip = xSemaphoreCreateBinary();
 
@@ -362,7 +423,14 @@ extern "C" void app_main(void) {
   std::string host = settings.sensorName;
   wifi.configSetHostName(host);
 
-  // MQTT.
+  // MQTT. An NVS copy that lost its broker (an empty-string save, a wiped
+  // partition) would leave the panel looking healthy but permanently silent, so
+  // fall back to the compiled host rather than trusting the empty value.
+  if (settings.mqttServer.empty() && *DESK_MQTT_SERVER != '\0') {
+    settings.mqttServer = DESK_MQTT_SERVER;
+    ESP_LOGW(TAG, "mqtt_server empty in NVS; using compiled default '%s'",
+             settings.mqttServer.c_str());
+  }
   static std::string uri = "mqtt://" + settings.mqttServer + ":" + std::to_string(settings.mqttPort);
   static esp_mqtt_client_config_t mcfg = {};
   mcfg.broker.address.uri = uri.c_str();
@@ -372,6 +440,12 @@ extern "C" void app_main(void) {
     mcfg.credentials.authentication.password = settings.mqttPass.c_str();
   }
   mcfg.session.keepalive = 30;
+  // The UI config arrives as one JSON blob on cmnd/<name>/config — 1.1 KB for the
+  // built-in layout before any state/query sections are added, which is already
+  // past esp-mqtt's 1024-byte default. Oversized inbound messages are dropped
+  // before they reach a handler, so the panel would look perfectly connected and
+  // still ignore every config push. Give the client room for the whole config.
+  mcfg.buffer.size = 4096;
   static MqttClient mqtt(mcfg, settings.sensorName);
   g_settings = &settings;
   g_nvs = &nvs;
@@ -390,14 +464,17 @@ extern "C" void app_main(void) {
   // WebServer base, plus OTA (/firmware) — the same routes stillerate2,
   // ws-voice and mqttradar expose, so ./build.sh ota works here too.
   startClock();
+  // Loaded before the web server starts so /healthz can report the live config.
+  const cfg::UiConfig uiCfg = loadUiConfig(nvs, settings.sensorName);
   static WebContext webctx(&wifi);
-  static PanelWebServer web(&webctx);
+  static PanelWebServer web(&webctx, settings.mqttServer, settings.sensorName,
+                            describeConfig(uiCfg), &s_wifiUp, &s_mqttUp);
   if (web.start() != ESP_OK) ESP_LOGE(TAG, "web server failed to start");
   ESP_LOGI(TAG, "OTA ready at http://<ip>/firmware (heap free %u)",
            static_cast<unsigned>(esp_get_free_heap_size()));
   xTaskCreate(otaVerifyTask, "ota_verify", 4096, nullptr, 4, nullptr);
 
-  ui::init(loadUiConfig(nvs, settings.sensorName), &mqtt, &s_wifiUp, &s_mqttUp);
+  ui::init(uiCfg, &mqtt, &s_wifiUp, &s_mqttUp);
 
   ESP_LOGI(TAG, "desk controller started");
 

@@ -9,3 +9,8 @@ dependencies.lock
 # Machine-specific: the real MQTT broker host (see main/Settings.h)
 main/local_settings.h
 
+# Machine-specific: the panel's real config (device topics/IDs), pushed to
+# cmnd/<name>/config after an NVS wipe. The committed default_config.json uses
+# placeholders on purpose.
+desk-config.local.json
+

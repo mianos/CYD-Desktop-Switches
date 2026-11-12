@@ -5,6 +5,7 @@
 #include <cinttypes>
 #include <ctime>
 #include <string>
+#include <utility>
 
 #include "esp_app_desc.h"
 #include "esp_log.h"
@@ -25,7 +26,15 @@ esp_err_t send_json(httpd_req_t* req, const JsonWrapper& json) {
 
 }  // namespace
 
-PanelWebServer::PanelWebServer(WebContext* ctx) : WebServer(ctx) {}
+PanelWebServer::PanelWebServer(WebContext* ctx, std::string broker, std::string sensor,
+                              std::string buttons, const std::atomic<bool>* wifiUp,
+                              const std::atomic<bool>* mqttUp)
+    : WebServer(ctx),
+      m_broker(std::move(broker)),
+      m_sensor(std::move(sensor)),
+      m_buttons(std::move(buttons)),
+      m_wifiUp(wifiUp),
+      m_mqttUp(mqttUp) {}
 
 esp_err_t PanelWebServer::start() {
     esp_err_t r = WebServer::start();
@@ -67,6 +76,16 @@ void PanelWebServer::populate_healthz_fields(WebContext*, JsonWrapper& json) {
     // Anything earlier than 2020-09 means SNTP has not landed yet and the
     // "time" field is still the 1970 default.
     json.AddItem("clock_set", static_cast<bool>(time(nullptr) > 1600000000));
+    // Where the panel is and what it drives. "mqtt" is true once the client has
+    // connected since boot (mqttwrapper exposes no live state), and "buttons"
+    // lists the topics a tap publishes to — the quickest way to spot a panel
+    // still running the placeholder config, or configured for another broker.
+    json.AddItem("wifi",   static_cast<bool>(m_wifiUp && m_wifiUp->load()));
+    json.AddItem("mqtt",   static_cast<bool>(m_mqttUp && m_mqttUp->load()));
+    json.AddItem("broker", m_broker);
+    json.AddItem("sensor", m_sensor);
+    json.AddItem("config_topic", "cmnd/" + m_sensor + "/config");
+    json.AddItem("buttons", m_buttons);
 }
 
 // POST /firmware — raw .bin body. Streams into the inactive OTA slot, sets it as

@@ -19,3 +19,13 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 CONFIG_COMPILER_CXX_EXCEPTIONS=y
 CONFIG_COMPILER_CXX_RTTI=y
 
+# DHCP option budget. The request carries the hostname twice — option 12 and
+# ESP-IDF's vendor-class-identifier hook, which falls back to it — plus the
+# client id, so it needs 41 + 2*strlen(hostname) bytes of option space. The 69
+# IDF picks here fits a 14-character name; the stock 11-character default hides
+# it. The panel names itself after sensor_name (capped at 32 in main.cpp), which
+# needs 105 bytes: a short name is the only reason this has never bitten, and a
+# longer one would fail DHCP and eventually have its Wi-Fi credentials wiped by
+# wifiWatchdogTask.
+CONFIG_LWIP_DHCP_OPTIONS_LEN=128
+
