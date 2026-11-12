@@ -24,14 +24,16 @@ namespace ui {
 namespace {
 
 constexpr char TAG[] = "ui";
-// Touch calibration, measured corner-to-corner on this panel. Raw X tracks the
-// horizontal axis but runs backwards (high at the left edge), so it is mirrored;
-// raw Y runs top-to-bottom as expected.
-constexpr bool kInvertX = true;
-constexpr bool kInvertY = false;
+// Touch calibration, measured corner-to-corner on this panel in the panel's
+// native axes: raw X runs along the 240-px column axis but runs backwards (high
+// at the left edge), raw Y runs down the 320-px row axis. Both were measured in
+// portrait and are unchanged by the landscape framebuffer — touchToScreen()
+// rotates the result — so recalibrating is still four numbers. The reversals
+// live in board::kMirrorX/kMirrorY because the panel needs exactly the same
+// ones.
 
-// Raw 12-bit ADC values at screen x=0 / x=239 and y=0 / y=319, taken from held
-// corner presses (raw X runs backwards, hence kInvertX).
+// Raw 12-bit ADC values at native column x=0 / x=239 and row y=0 / y=319, taken
+// from held corner presses.
 constexpr int kRawXMin = 560, kRawXMax = 3530;
 constexpr int kRawYMin = 320, kRawYMax = 3665;
 
@@ -49,28 +51,32 @@ int mapAxis(int v, int inMin, int inMax, int outMax) {
   return out;
 }
 
-// Convert raw touch coordinates into portrait screen pixels.
+// Convert raw touch coordinates into landscape screen pixels. The ADC keeps the
+// panel's native axes, so map into native pixels first and rotate afterwards:
+// with MV set, framebuffer X walks the native rows and framebuffer Y the native
+// columns, and MX/MY (board::kMirrorX/kMirrorY) reverse those two. MX and MY are
+// equal, so kUpsideDown flips both axes — the same 180° the panel gets — which
+// is what keeps the picture and the hit boxes in step.
 void touchToScreen(uint16_t rawX, uint16_t rawY, int* sx, int* sy) {
-  int x = mapAxis(rawX, kRawXMin, kRawXMax, board::kWidth - 1);
-  int y = mapAxis(rawY, kRawYMin, kRawYMax, board::kHeight - 1);
-  if (kInvertX) x = (board::kWidth - 1) - x;
-  if (kInvertY) y = (board::kHeight - 1) - y;
-  *sx = x;
-  *sy = y;
+  const int col = mapAxis(rawX, kRawXMin, kRawXMax, board::kNativeW - 1);
+  const int row = mapAxis(rawY, kRawYMin, kRawYMax, board::kNativeH - 1);
+  *sx = board::kMirrorY ? (board::kNativeH - 1) - row : row;
+  *sy = board::kMirrorX ? (board::kNativeW - 1) - col : col;
 }
 
 // The CYD (ESP32-WROOM-32) has no PSRAM, and Wi-Fi + MQTT leave too little RAM
-// for a full 240x320 framebuffer, so the screen is drawn in horizontal bands.
-constexpr int kBandH = 40;
+// for a full 320x240 framebuffer, so the screen is drawn in horizontal bands.
+// 24 rows x 320 px x 2 bytes is 15 KB of DMA-capable heap — less than the
+// 40-row bands cost back when the screen was portrait.
+constexpr int kBandH = 24;
 constexpr int kBandPixels = board::kWidth * kBandH;
 
 constexpr int kGap = 8;
 constexpr int kStatusH = 38;
 
 // Footer strip reserved at the bottom for the clock. It is taken out of the row
-// stack, so a config with auto rows (height 0) gives the space back by itself;
-// the default config's rows are 64 + 64 + 88 px, which already leaves 34 px of
-// the content area unused, so its buttons keep their exact size.
+// stack, so a config with auto rows (height 0) gives the space back by itself:
+// the default config's two auto rows split the whole content area between them.
 constexpr int kFooterH = 26;
 
 // Before 2020 the RTC is still at its 1970 default, i.e. SNTP has not set the
@@ -398,24 +404,53 @@ void render() {
   }
 }
 
+// Smallest row the automatic share will hand out before every row is scaled
+// down instead.
+constexpr int kMinRowH = 16;
+
+// Fit the configured row heights into `usable` px. Auto rows (height 0) share
+// whatever the fixed rows leave over; if the fixed rows alone overflow, every
+// row is scaled down instead. Without this a config authored for a taller
+// screen — an NVS copy from before the panel was rotated, say — would stack its
+// rows under the footer, where they can be neither read nor tapped.
+void fitRows(std::vector<int>& heights, int usable) {
+  int fixed = 0, autos = 0;
+  for (int h : heights) {
+    if (h > 0) fixed += h;
+    else autos++;
+  }
+  const int spare = usable - fixed;
+  if (autos > 0 && spare / autos >= kMinRowH) {
+    for (int& h : heights)
+      if (h <= 0) h = spare / autos;
+    return;
+  }
+  if (autos == 0 && spare >= 0) return;  // fixed rows already fit
+  // Not enough room, even for the minimum: scale every row by the same factor.
+  // Rows end up small, but a row drawn below the footer can never be tapped at
+  // all, so fitting badly beats not fitting.
+  const int want = fixed + autos * kMinRowH;
+  ESP_LOGW(TAG, "row heights scaled to fit %d px (config asks for %d)", usable, want);
+  for (int& h : heights) {
+    const int base = h > 0 ? h : kMinRowH;
+    h = base * usable / (want > 0 ? want : 1);
+    if (h < 1) h = 1;
+  }
+}
+
 // Stacks the configured rows and splits each one into equal-width buttons.
 void layout() {
   const int rows = (int)s_cfg.rowHeights.size();
   s_rowFace.assign(s_cfg.rowHeights.size(), &font::big);
   const int top = kStatusH + kGap;
   const int bottom = board::kHeight - kGap - kFooterH;
-  int fixed = 0, autoCount = 0;
-  for (int h : s_cfg.rowHeights) {
-    if (h > 0) fixed += h;
-    else autoCount++;
-  }
   const int usable = bottom - top - (rows > 0 ? (rows - 1) * kGap : 0);
-  int autoH = autoCount > 0 ? (usable - fixed) / autoCount : 0;
-  if (autoH < 24) autoH = 24;
+  std::vector<int> heights = s_cfg.rowHeights;
+  fitRows(heights, usable);
 
   int y = top;
   for (int r = 0; r < rows; r++) {
-    const int h = s_cfg.rowHeights[r] > 0 ? s_cfg.rowHeights[r] : autoH;
+    const int h = heights[r];
     std::vector<size_t> inRow;
     for (size_t i = 0; i < s_cfg.buttons.size(); i++)
       if (s_cfg.buttons[i].row == r) inRow.push_back(i);

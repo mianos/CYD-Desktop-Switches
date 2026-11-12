@@ -3,7 +3,7 @@
   "poll_s": 60,
   "rows": [
     {
-      "height": 64,
+      "height": 0,
       "buttons": [
         {
           "label": "DESK",
@@ -21,12 +21,7 @@
             "topic": "cmnd/zigbridge/ZbSend",
             "payload": "{\"Device\":\"0x1234\",\"read\":{\"Power\":1}}"
           }
-        }
-      ]
-    },
-    {
-      "height": 64,
-      "buttons": [
+        },
         {
           "label": "LIGHT",
           "publish": {
@@ -46,7 +41,7 @@
       ]
     },
     {
-      "height": 88,
+      "height": 0,
       "buttons": [
         {
           "label": "UP",

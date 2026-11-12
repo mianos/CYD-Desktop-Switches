@@ -92,8 +92,11 @@ void initPanel() {
   ESP_ERROR_CHECK(esp_lcd_panel_reset(s_panel));
   ESP_ERROR_CHECK(esp_lcd_panel_init(s_panel));
   ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(s_panel, true));
-  // CYD panels are wired with the column order reversed.
-  ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, true, false));
+  // Landscape: swap the axes, then apply the rotation that keeps this panel's
+  // reversed column order straight (see board::kUpsideDown). Both calls only
+  // rewrite MADCTL, so the order between them does not matter.
+  ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(s_panel, true));
+  ESP_ERROR_CHECK(esp_lcd_panel_mirror(s_panel, board::kMirrorX, board::kMirrorY));
 }
 
 void initTouch() {
